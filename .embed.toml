@@ -1,0 +1,8 @@
+[default.general]
+# The chip name of the chip to be debugged.
+chip = "STM32F411CEUx"
+
+[default.rtt]
+# Whether or not an RTTUI should be opened after flashing.
+# This is exclusive and cannot be used with GDB at the moment.
+enabled = true
