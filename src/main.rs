@@ -2,6 +2,7 @@
 #![no_main]
 
 use core::panic::PanicInfo;
+use embedded_graphics::primitives::Circle;
 use rtt_target::{rprintln, rtt_init_print};
 
 use cortex_m_rt::entry;
@@ -12,6 +13,13 @@ use usbd_serial::{SerialPort, USB_CLASS_CDC};
 // use stm32f4xx_hal::gpio::{gpioa::PA, gpiob::PB, PullUp, PushPull, Input, Output};
 use usb_device::bus::UsbBusAllocator;
 
+use embedded_graphics::{
+    pixelcolor::Rgb565,
+    prelude::*,
+    style::{PrimitiveStyle, PrimitiveStyleBuilder},
+};
+
+use stm32f4xx_hal::spi::{Mode, Phase, Polarity, Spi};
 
 static mut USB_BUS: Option<UsbBusAllocator<UsbBusType>> = None;
 static mut USB_SERIAL: Option<usbd_serial::SerialPort<UsbBusType>> = None;
@@ -22,6 +30,9 @@ use matrix::{Matrix, KeyState};
 
 mod encoder;
 use encoder::Encoder;
+
+mod display;
+use display::Display;
 
 #[entry]
 fn main() -> ! {
@@ -35,8 +46,10 @@ fn main() -> ! {
     let clocks= rcc
         .cfgr
         .use_hse(25.mhz())
-        .sysclk(48.mhz())
-        .pclk1(24.mhz())
+        .sysclk(96.mhz())
+        .hclk(96.mhz())
+        .pclk1(48.mhz())
+        .pclk2(96.mhz())
         .freeze();
 
     let mut delay = Delay::new(cortex_peripherals.SYST, clocks);
@@ -62,6 +75,25 @@ fn main() -> ! {
         gpioc.pc14.into_pull_up_input()
     );
 
+    let rst = gpioa.pa9.into_push_pull_output();
+    let dc = gpioa.pa8.into_push_pull_output();
+
+    let sck = gpiob.pb13.into_alternate_af5();
+    let miso = gpiob.pb14.into_alternate_af5(); // not used
+    let mosi = gpiob.pb15.into_alternate_af5();
+
+    let spi = Spi::spi2(
+        peripherals.SPI2,
+        (sck, miso, mosi),
+        Mode {
+            phase: Phase::CaptureOnFirstTransition,
+            polarity: Polarity::IdleLow
+        },
+        48_000_000.hz(),
+        clocks
+    );
+
+    let mut display = Display::new(spi, dc, rst);
 
     let mut matrix = Matrix::new(
         [
@@ -106,6 +138,11 @@ fn main() -> ! {
     };
 
 
+    display.init(&mut delay).unwrap();
+
+    // let mut draw_x = 0;
+    // let mut draw_y = 64;
+
     loop {
 
         matrix.update();
@@ -113,10 +150,10 @@ fn main() -> ! {
         cortex_m::interrupt::free(| _ | {
             for change in matrix.changes() {
                 match change.new_state {
-                    KeyState::Pressed => {
-                        serial_write(b"Pressed: ");
-                        serial_write(&[(0x30 + change.matrix_x) as u8, b' ', (0x30 + change.matrix_y) as u8, b'\n', b'\r']);
-                    },
+                    // KeyState::Pressed => {
+                    //     serial_write(b"Pressed: ");
+                    //     serial_write(&[(0x30 + change.matrix_x) as u8, b' ', (0x30 + change.matrix_y) as u8, b'\n', b'\r']);
+                    // },
                     KeyState::Pressing => {
                         if change.matrix_x == 0 && change.matrix_y == 0 {
                             serial_write(b"A: ");
@@ -126,20 +163,32 @@ fn main() -> ! {
                             serial_write(b"B: ");
                             serial_write(&format_u16(rotary_b.count()));
                             serial_write(b"\n\r");
+                        }
+                        else if change.matrix_x == 2 && change.matrix_y == 2 {
+                            Circle::new(Point::new((rotary_a.count() / 4) as i32, (rotary_b.count() / 4) as i32).into(), 16)
+                            .into_styled(PrimitiveStyle::with_fill(Rgb565::RED))
+                            .draw(display.get()).unwrap();
+                            serial_write(b"Circle \n\r");
+
+                        } else if change.matrix_x == 2 && change.matrix_y == 0 {
+                            display.clear();
+                            serial_write(b"Clearing\n\r");
+
                         } else {
                             serial_write(b"Pressing: ");
                             serial_write(&[(0x30 + change.matrix_x) as u8, b' ', (0x30 + change.matrix_y) as u8, b'\n', b'\r']);
                         }
 
                     },
-                    KeyState::Released => {
-                        serial_write(b"Released: ");
-                        serial_write(&[(0x30 + change.matrix_x) as u8, b' ', (0x30 + change.matrix_y) as u8, b'\n', b'\r']);
-                    },
-                    KeyState::Releasing => {
-                        serial_write(b"Releasing: ");
-                        serial_write(&[(0x30 + change.matrix_x) as u8, b' ', (0x30 + change.matrix_y) as u8, b'\n', b'\r']);
-                    }
+                    // KeyState::Released => {
+                    //     serial_write(b"Released: ");
+                    //     serial_write(&[(0x30 + change.matrix_x) as u8, b' ', (0x30 + change.matrix_y) as u8, b'\n', b'\r']);
+                    // },
+                    // KeyState::Releasing => {
+                    //     serial_write(b"Releasing: ");
+                    //     serial_write(&[(0x30 + change.matrix_x) as u8, b' ', (0x30 + change.matrix_y) as u8, b'\n', b'\r']);
+                    // }
+                    _ => ()
                 }
             }
             if rotary_a.is_pressed().unwrap() {
@@ -153,35 +202,6 @@ fn main() -> ! {
         delay.delay_ms(100u16);
     }
 }
-
-        // if usb_device.poll(&mut [&mut serial]) {
-        //     let mut buf = [0u8; 64];
-
-        //     match serial.read(&mut buf) {
-        //         Ok(count) if count > 0 => {
-    
-        //             // let a = rotary_encoder_a.count();
-        //             // wrapping_sub
-                    
-        //             let b = rotary_encoder_b.count();
-        //             let encoder = format_u16(b);
-    
-        //             serial_write(&mut serial, b"B: ");
-        //             serial_write(&mut serial, &encoder);
-        //             serial_write(&mut serial, b"\n\r");
-    
-    
-        //             let a = rotary_encoder_a.count();
-        //             let encoder = format_u32(a);
-    
-        //             serial_write(&mut serial, b"A: ");
-        //             serial_write(&mut serial, &encoder);
-        //             serial_write(&mut serial, b"\n\r");
-    
-        //         }
-        //         _ => {}
-        //     }
-        // }
 
 
 // fn serial_write(serial: &mut SerialPort<UsbBus<USB>, DefaultBufferStore, DefaultBufferStore>, data: &[u8]) {

@@ -11,15 +11,13 @@ cortex-m = "0.7"
 cortex-m-rt = "0.6"
 usb-device = "0.2"
 usbd-serial = "0.1"
-# panic-halt = "0.2"
 rtt-target = { version = "0.3", features = ["cortex-m"] }
 embedded-hal = { version = "0.2", features = ["unproven"]}
+ssd1351 = { git = "https://github.com/Lukas-Sturm/ssd1351" }
+stm32f4xx-hal = { git = "https://github.com/stm32-rs/stm32f4xx-hal", features = ["stm32f411", "rt", "usb_fs"]}
+embedded-graphics = "0.6"
+# panic-halt = "0.2"
 # panic-semihosting = "0.5.6"
 # cortex-m-semihosting = "0.3.7"
 
 # stm32f4xx-hal = { version = "0.8", features = ["stm32f411", "rt", "usb_fs"]}
-
-[dependencies.stm32f4xx-hal]
-features = ["stm32f411", "rt", "usb_fs"]
-# version = "0.8"
-git = "https://github.com/stm32-rs/stm32f4xx-hal"
