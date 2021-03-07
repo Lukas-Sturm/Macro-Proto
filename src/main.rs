@@ -154,7 +154,7 @@ fn main() -> ! {
 
     loop {
 
-        matrix.update();
+        matrix.update(&mut delay);
         vibrator.update();
 
         cortex_m::interrupt::free(| _ | {

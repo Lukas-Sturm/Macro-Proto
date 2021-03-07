@@ -1,18 +1,13 @@
-use core::mem;
-
 use embedded_hal::digital::v2::InputPin;
 use embedded_hal::digital::v2::OutputPin;
-
-// use rtt_target::rprintln;
+use embedded_hal::blocking::delay::DelayUs;
 
 pub struct Matrix<R, C> {
     rows: [R; 4],
     columns: [C; 4],
 
-    matrix: [[bool; 4]; 4],
-    previous_matrix: [[bool; 4]; 4],
     states: [[KeyState; 4]; 4],
-    changed_states: [[bool; 4]; 4]
+    states_changed: [[bool; 4]; 4]
 }
 
 #[derive(Clone, Copy)]
@@ -28,7 +23,7 @@ pub struct Changes<'a> {
     matrix_x: usize,
 
     states: &'a[[KeyState; 4]; 4],
-    changed_states: &'a mut[[bool; 4]; 4]
+    states_changed: &'a mut[[bool; 4]; 4]
 }
 
 pub struct Change {
@@ -43,11 +38,11 @@ impl<'a> Iterator for Changes<'a> {
     fn next(&mut self) -> Option<<Self as Iterator>::Item> {
        for y in self.matrix_y..4 {
            for x in self.matrix_x..4 {
-                if self.changed_states[y][x] {
+                if self.states_changed[y][x] {
 
                     self.matrix_x = x + 1;
                     self.matrix_y = y;
-                    self.changed_states[y][x] = false;
+                    self.states_changed[y][x] = false;
 
                     return Some(Change {
                        new_state: self.states[y][x],
@@ -67,13 +62,10 @@ where
     C: OutputPin<> {
 
     pub fn new(rows: [R; 4], columns: [C; 4]) -> Matrix<R, C> {
-        // pub fn new(rows: [PB<Input<PullUp>>; 4], columns: [PA<Output<PushPull>>; 4]) -> Matrix {
         Matrix{
             columns, rows,
-            matrix:[[false; 4]; 4],
-            previous_matrix: [[false; 4]; 4],
             states: [[KeyState::Released; 4]; 4],
-            changed_states: [[false; 4]; 4]
+            states_changed: [[false; 4]; 4]
         }
     }
 
@@ -86,50 +78,35 @@ where
         Changes{
             matrix_y: 0, matrix_x: 0,
             states: &self.states,
-            changed_states: &mut self.changed_states
+            states_changed: &mut self.states_changed
         }
     }
 
-    pub fn update(&mut self) {
+    pub fn update<DELAY: DelayUs<u16>> (&mut self, delay: &mut DELAY) {
         let rows = &self.rows;
         let columns = &mut self.columns;
 
         for (i_col, col) in columns.iter_mut().enumerate() {
-            match col.set_low() { Ok(_) => (), Err(_) => panic!("Set Pin") }
+            col.set_low().map_err(| _ | ()).unwrap();
+
+            // need some time to read right input (maybe capacitances)
+            delay.delay_us(5);
 
             for (i_row, row) in rows.iter().enumerate() {
-                self.matrix[i_col][i_row] = match row.is_low() { 
-                    Ok(is_low) => is_low, 
-                    Err(_) => panic!("Could not read pin") 
-                };
+                let button = row.is_low().map_err(| _ | ()).unwrap();
                 
-                if self.matrix[i_col][i_row] != self.previous_matrix[i_col][i_row] {
-                    if self.matrix[i_col][i_row] {
-                        self.states[i_col][i_row] = KeyState::Pressing;
-                        self.changed_states[i_col][i_row] = true;
-                    } else {
-                        self.states[i_col][i_row] = KeyState::Releasing;
-                        self.changed_states[i_col][i_row] = true;
-                    }
-                } else {
-                    match self.states[i_col][i_row] {
-                        KeyState::Pressing => { 
-                            self.states[i_col][i_row] = KeyState::Pressed;
-                            self.changed_states[i_col][i_row] = true;
-                        },
-                        KeyState::Releasing => {
-                            self.changed_states[i_col][i_row] = true;
-                            self.states[i_col][i_row] = KeyState::Released;
-                        },
-                        _ => ()
-                    }
+                match self.states[i_col][i_row] {
+                    KeyState::Pressed if !button => { self.states[i_col][i_row] = KeyState::Releasing; self.states_changed[i_col][i_row] = true},
+                    KeyState::Released if button => { self.states[i_col][i_row] = KeyState::Pressing; self.states_changed[i_col][i_row] = true},
+                    KeyState::Releasing if button => { self.states[i_col][i_row] = KeyState::Pressing; self.states_changed[i_col][i_row] = true},
+                    KeyState::Releasing if !button => { self.states[i_col][i_row] = KeyState::Released; self.states_changed[i_col][i_row] = true},
+                    KeyState::Pressing if button => { self.states[i_col][i_row] = KeyState::Pressed; self.states_changed[i_col][i_row] = true},
+                    KeyState::Pressing if !button => { self.states[i_col][i_row] = KeyState::Releasing; self.states_changed[i_col][i_row] = true},
+                    _ => ()
                 }
             }
 
-            match col.set_high() { Ok(_) => (), Err(_) => panic!("Set Pin") }
+            col.set_high().map_err(| _ | ()).unwrap();
         }
-
-        // rprintln!("{:?}", self.matrix);
-        mem::swap(&mut self.matrix, &mut self.previous_matrix);
     }
 } 
