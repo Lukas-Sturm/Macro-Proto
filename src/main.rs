@@ -10,16 +10,16 @@ use stm32f4xx_hal::otg_fs::{UsbBus, USB, UsbBusType};
 use stm32f4xx_hal::{prelude::*, stm32, qei::Qei, interrupt, delay::Delay};
 use usb_device::prelude::*;
 use usbd_serial::{SerialPort, USB_CLASS_CDC};
-// use stm32f4xx_hal::gpio::{gpioa::PA, gpiob::PB, PullUp, PushPull, Input, Output};
 use usb_device::bus::UsbBusAllocator;
 
 use embedded_graphics::{
     pixelcolor::Rgb565,
     prelude::*,
-    style::{PrimitiveStyle, PrimitiveStyleBuilder},
+    style::PrimitiveStyle,
 };
 
 use stm32f4xx_hal::spi::{Mode, Phase, Polarity, Spi};
+use stm32f4xx_hal::pwm;
 
 static mut USB_BUS: Option<UsbBusAllocator<UsbBusType>> = None;
 static mut USB_SERIAL: Option<usbd_serial::SerialPort<UsbBusType>> = None;
@@ -33,6 +33,9 @@ use encoder::Encoder;
 
 mod display;
 use display::Display;
+
+mod vibrator;
+use vibrator::Vibrator;
 
 #[entry]
 fn main() -> ! {
@@ -57,6 +60,7 @@ fn main() -> ! {
     let gpioa = peripherals.GPIOA.split();
     let gpiob = peripherals.GPIOB.split();
     let gpioc = peripherals.GPIOC.split();
+    let gpioe = peripherals.GPIOE.split();
 
     // Encoder
     let rotary_a = Encoder::new(
@@ -94,6 +98,13 @@ fn main() -> ! {
     );
 
     let mut display = Display::new(spi, dc, rst);
+
+    let channels = (
+        gpioa.pa10.into_alternate_af1(),
+        gpioe.pe14.into_alternate_af1(), // Channel not used
+    );
+
+    let mut vibrator = Vibrator::new(pwm::tim1(peripherals.TIM1, channels, clocks, 500u32.hz()));
 
     let mut matrix = Matrix::new(
         [
@@ -140,21 +151,23 @@ fn main() -> ! {
 
     display.init(&mut delay).unwrap();
 
-    // let mut draw_x = 0;
-    // let mut draw_y = 64;
 
     loop {
 
         matrix.update();
+        vibrator.update();
 
         cortex_m::interrupt::free(| _ | {
             for change in matrix.changes() {
+
                 match change.new_state {
                     // KeyState::Pressed => {
                     //     serial_write(b"Pressed: ");
                     //     serial_write(&[(0x30 + change.matrix_x) as u8, b' ', (0x30 + change.matrix_y) as u8, b'\n', b'\r']);
                     // },
                     KeyState::Pressing => {
+                        vibrator.enable(4);
+
                         if change.matrix_x == 0 && change.matrix_y == 0 {
                             serial_write(b"A: ");
                             serial_write(&format_u32(rotary_a.count()));
@@ -199,7 +212,7 @@ fn main() -> ! {
             }
         });
 
-        delay.delay_ms(100u16);
+        delay.delay_ms(50u16);
     }
 }
 
